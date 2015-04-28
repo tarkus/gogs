@@ -74,7 +74,7 @@ func sendMail(settings *setting.Mailer, recipients []string, msgContent []byte) 
 	}
 
 	tlsconfig := &tls.Config{
-		InsecureSkipVerify: settings.SkipVerify,
+		InsecureSkipVerify: true,
 		ServerName:         host,
 	}
 

@@ -104,8 +104,8 @@ func NewRepoContext() {
 		log.Fatal(4, "Gogs requires Git version greater or equal to 1.7.1")
 	}
 
-	// Check if server has user.email and user.name set correctly and set if they're not.
-	for configKey, defaultValue := range map[string]string{"user.name": "Gogs", "user.email": "gogitservice@gmail.com"} {
+	// Git requires setting user.name and user.email in order to commit changes.
+	for configKey, defaultValue := range map[string]string{"user.name": "Gogs", "user.email": "gogs@fake.local"} {
 		if stdout, stderr, err := process.Exec("NewRepoContext(get setting)", "git", "config", "--get", configKey); err != nil || strings.TrimSpace(stdout) == "" {
 			// ExitError indicates this config is not set
 			if _, ok := err.(*exec.ExitError); ok || strings.TrimSpace(stdout) == "" {
@@ -283,9 +283,9 @@ type Mirror struct {
 	NextUpdate time.Time
 }
 
-func GetMirror(repoId int64) (*Mirror, error) {
+func getMirror(e Engine, repoId int64) (*Mirror, error) {
 	m := &Mirror{RepoId: repoId}
-	has, err := x.Get(m)
+	has, err := e.Get(m)
 	if err != nil {
 		return nil, err
 	} else if !has {
@@ -294,9 +294,18 @@ func GetMirror(repoId int64) (*Mirror, error) {
 	return m, nil
 }
 
-func UpdateMirror(m *Mirror) error {
-	_, err := x.Id(m.Id).Update(m)
+// GetMirror returns mirror object by given repository ID.
+func GetMirror(repoId int64) (*Mirror, error) {
+	return getMirror(x, repoId)
+}
+
+func updateMirror(e Engine, m *Mirror) error {
+	_, err := e.Id(m.Id).Update(m)
 	return err
+}
+
+func UpdateMirror(m *Mirror) error {
+	return updateMirror(x, m)
 }
 
 // MirrorRepository creates a mirror repository from source.
@@ -695,6 +704,18 @@ func TransferOwnership(u *User, newOwnerName string, repo *Repository) error {
 		return fmt.Errorf("watchRepo: %v", err)
 	} else if err = transferRepoAction(sess, u, owner, newOwner, repo); err != nil {
 		return fmt.Errorf("transferRepoAction: %v", err)
+	}
+
+	// Update mirror information.
+	if repo.IsMirror {
+		mirror, err := getMirror(sess, repo.Id)
+		if err != nil {
+			return fmt.Errorf("getMirror: %v", err)
+		}
+		mirror.RepoName = newOwner.LowerName + "/" + repo.LowerName
+		if err = updateMirror(sess, mirror); err != nil {
+			return fmt.Errorf("updateMirror: %v", err)
+		}
 	}
 
 	// Change repository directory name.
@@ -1107,6 +1128,10 @@ func (repo *Repository) AddCollaborator(u *User) error {
 		return nil
 	}
 
+	if err = repo.GetOwner(); err != nil {
+		return fmt.Errorf("GetOwner: %v", err)
+	}
+
 	sess := x.NewSession()
 	defer sessionRelease(sess)
 	if err = sess.Begin(); err != nil {
@@ -1115,8 +1140,15 @@ func (repo *Repository) AddCollaborator(u *User) error {
 
 	if _, err = sess.InsertOne(collaboration); err != nil {
 		return err
-	} else if err = repo.recalculateAccesses(sess); err != nil {
-		return err
+	}
+
+	if repo.Owner.IsOrganization() {
+		err = repo.recalculateTeamAccesses(sess, 0)
+	} else {
+		err = repo.recalculateAccesses(sess)
+	}
+	if err != nil {
+		return fmt.Errorf("recalculateAccesses 'team=%v': %v", repo.Owner.IsOrganization(), err)
 	}
 
 	return sess.Commit()

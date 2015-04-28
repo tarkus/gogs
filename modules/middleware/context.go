@@ -180,12 +180,7 @@ func Contexter() macaron.Handler {
 			Session: sess,
 		}
 		// Compute current URL for real-time change language.
-		link := setting.AppSubUrl + ctx.Req.RequestURI
-		i := strings.Index(link, "?")
-		if i > -1 {
-			link = link[:i]
-		}
-		ctx.Data["Link"] = link
+		ctx.Data["Link"] = setting.AppSubUrl + ctx.Req.URL.Path
 
 		ctx.Data["PageStartTime"] = time.Now()
 
@@ -214,6 +209,7 @@ func Contexter() macaron.Handler {
 		ctx.Data["CsrfTokenHtml"] = template.HTML(`<input type="hidden" name="_csrf" value="` + x.GetToken() + `">`)
 
 		ctx.Data["ShowRegistrationButton"] = setting.Service.ShowRegistrationButton
+		ctx.Data["ShowFooterBranding"] = setting.ShowFooterBranding
 
 		c.Map(ctx)
 	}
